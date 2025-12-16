@@ -80,7 +80,7 @@ class SignalProcessor:
         
         return ranging_signal.astype(np.float32)
     
-    def detect_chirp(self, recorded_signal, threshold_ratio=0.15, expected_peaks=2):
+    def detect_chirp(self, recorded_signal, threshold_ratio=0.12, expected_peaks=2):
         """
         在录制的信号中检测Chirp信号位置
         使用互相关方法，增强鲁棒性
@@ -117,8 +117,8 @@ class SignalProcessor:
             return [], correlation
         
         # 检测峰值 - 使用更宽松的条件
-        # 最小间隔：根据录音时长动态调整，至少30ms
-        min_distance = int(self.sample_rate * 0.03)
+        # 最小间隔：根据录音时长动态调整，至少20ms
+        min_distance = int(self.sample_rate * 0.02)
         
         peaks, properties = signal.find_peaks(
             correlation_norm, 
@@ -136,13 +136,9 @@ class SignalProcessor:
                 prominence=0.05
             )
         
-        # 按峰值高度排序，选择最强的几个峰值
+        # 为避免丢失较弱但较晚的峰（对方的Chirp通常较弱），改为按时间顺序取最早的 expected_peaks 个
         if len(peaks) > expected_peaks:
-            peak_heights = correlation_norm[peaks]
-            sorted_indices = np.argsort(peak_heights)[::-1]  # 降序
-            # 选择最强的峰值，然后按时间顺序排列
-            top_peaks = peaks[sorted_indices[:expected_peaks]]
-            peaks = np.sort(top_peaks)
+            peaks = np.sort(peaks)[:expected_peaks]
         
         return peaks.tolist(), correlation
     
