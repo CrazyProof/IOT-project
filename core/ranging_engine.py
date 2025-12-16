@@ -215,17 +215,30 @@ class RangingEngine:
         # 生成测距信号
         signal = self.signal_processor.generate_ranging_signal()
         
+        # 启动音频流和录音
+        self.audio.start_stream()
+        self.audio.start_recording()
+        
         # 通知锚节点准备
         self.network.send_message(NetworkManager.MSG_START_RANGING, {
             'measurement_id': self.measurement_count
         })
         
-        # 等待锚节点准备好录音（增加等待时间确保同步）
-        time.sleep(0.15)
+        # 等待锚节点准备好 (100ms)
+        time.sleep(0.1)
         
-        # 播放并录音
-        self._set_state(self.STATE_RECEIVING)
-        recorded = self.audio.play_and_record(signal, extra_duration=self.record_duration)
+        # 播放声音 (非阻塞)
+        self.audio.play_sound(signal)
+        
+        # 持续录音，确保覆盖：
+        # 1. 自己的声音 (T+0.1)
+        # 2. 锚节点的声音 (T+0.6 + ToF)
+        # 总共等待 1.2秒 足够覆盖
+        time.sleep(1.2)
+        
+        # 停止录音和流
+        recorded = self.audio.stop_recording()
+        self.audio.stop_stream()
         
         # 处理信号
         self._set_state(self.STATE_PROCESSING)
@@ -246,13 +259,27 @@ class RangingEngine:
         """锚节点执行测距响应"""
         self._set_state(self.STATE_RECEIVING)
         
-        # 立即开始录音，准备接收目标设备的信号
-        # 生成并发送响应信号
-        self._set_state(self.STATE_SENDING)
+        # 生成信号
         signal = self.signal_processor.generate_ranging_signal()
         
-        # 播放并录音（不需要额外等待，直接开始）
-        recorded = self.audio.play_and_record(signal, extra_duration=self.record_duration)
+        # 启动音频流和录音
+        self.audio.start_stream()
+        self.audio.start_recording()
+        
+        # 等待目标设备播放并声音到达
+        # 目标在 T+0.1 播放
+        # 我们在 T+0.6 播放，确保顺序：Target(Other) -> Anchor(Self)
+        time.sleep(0.6)
+        
+        self._set_state(self.STATE_SENDING)
+        self.audio.play_sound(signal)
+        
+        # 等待播放完成和余量
+        time.sleep(0.6)
+        
+        # 停止录音
+        recorded = self.audio.stop_recording()
+        self.audio.stop_stream()
         
         # 处理信号
         self._set_state(self.STATE_PROCESSING)
@@ -285,8 +312,9 @@ class RangingEngine:
         delta_a = t_a3 - t_a1
         delta_b = t_b3 - t_b1
         
-        # 时间差应该为正数，且不应该太大（对应最大测距范围）
-        max_time_diff = int(self.sample_rate * 0.5)  # 最大约85米
+        # 时间差应该为正数
+        # 由于我们人为引入了延时，时间差会比较大 (约0.5秒)
+        max_time_diff = int(self.sample_rate * 1.5)  # 放宽限制
         min_time_diff = int(self.sample_rate * 0.001)  # 最小约0.3米
         
         if delta_a < min_time_diff or delta_b < min_time_diff:
