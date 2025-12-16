@@ -46,7 +46,7 @@ class RangingEngine:
         
         # 测距参数
         self.ranging_interval = 0.1  # 测距间隔（秒）
-        self.record_duration = 0.8   # 录音时长（秒），延长以确保收到对方Chirp
+        self.record_duration = 1.0   # 录音时长（秒），进一步延长以确保收到对方Chirp
         
         # 测量数据
         self.local_detections = []   # 本地检测结果

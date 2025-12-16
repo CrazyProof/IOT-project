@@ -30,7 +30,7 @@ class SignalProcessor:
         self.chirp_f1 = 20000       # 结束频率 (Hz)
         
         # 设备自身距离（扬声器到麦克风的距离）
-        self.d_self = 0.02  # 默认2cm，可根据实际设备调整
+        self.d_self = 0.15  # 默认15cm，可根据实际设备调整
         
         # 生成参考Chirp信号
         self.reference_chirp = self._generate_chirp()
@@ -80,7 +80,7 @@ class SignalProcessor:
         
         return ranging_signal.astype(np.float32)
     
-    def detect_chirp(self, recorded_signal, threshold_ratio=0.12, expected_peaks=2):
+    def detect_chirp(self, recorded_signal, threshold_ratio=0.08, expected_peaks=2):
         """
         在录制的信号中检测Chirp信号位置
         使用互相关方法，增强鲁棒性
@@ -117,8 +117,8 @@ class SignalProcessor:
             return [], correlation
         
         # 检测峰值 - 使用更宽松的条件
-        # 最小间隔：根据录音时长动态调整，至少20ms
-        min_distance = int(self.sample_rate * 0.02)
+        # 最小间隔：根据录音时长动态调整，至少15ms，避免漏掉对方较弱的峰
+        min_distance = int(self.sample_rate * 0.015)
         
         peaks, properties = signal.find_peaks(
             correlation_norm, 
