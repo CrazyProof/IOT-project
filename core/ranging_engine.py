@@ -207,6 +207,40 @@ class RangingEngine:
                 if self.on_error:
                     self.on_error(str(e))
                     
+    def _filter_peaks(self, peaks):
+        """
+        从检测到的峰值中筛选出最可能的两个峰值
+        根据设备角色和预期的时序进行筛选
+        """
+        if len(peaks) < 2:
+            return peaks
+            
+        # 转换为numpy数组以便计算
+        peaks = np.sort(peaks)
+        
+        # 预期的时间差范围 (采样点)
+        # Target: 理论差值 0.6s + 2*ToF。范围 [0.5s, 1.2s]
+        # Anchor: 理论差值 0.5s - ToF。范围 [0.2s, 0.6s]
+        
+        if self.device_role == 'target':
+            min_diff = int(self.sample_rate * 0.5)
+            max_diff = int(self.sample_rate * 1.2)
+        else:
+            min_diff = int(self.sample_rate * 0.2)
+            max_diff = int(self.sample_rate * 0.6)
+            
+        # 寻找最佳匹配对
+        # 优先寻找最早的符合条件的对
+        for i in range(len(peaks)):
+            for j in range(i + 1, len(peaks)):
+                diff = peaks[j] - peaks[i]
+                if min_diff <= diff <= max_diff:
+                    return [peaks[i], peaks[j]]
+                    
+        print(f"[{self.device_role}] 未找到符合时间差约束的峰值对。Peaks: {peaks}, Range: [{min_diff}, {max_diff}]")
+        # 如果找不到，返回空列表，避免错误计算
+        return []
+
     def _do_target_ranging(self):
         """目标设备执行测距"""
         self._set_state(self.STATE_SENDING)
@@ -242,10 +276,13 @@ class RangingEngine:
         
         # 处理信号
         self._set_state(self.STATE_PROCESSING)
-        detections, correlation = self.signal_processor.detect_chirp(recorded)
+        raw_detections, correlation = self.signal_processor.detect_chirp(recorded)
+        
+        # 筛选峰值
+        detections = self._filter_peaks(raw_detections)
         
         # 调试输出
-        print(f"[Target] 检测到 {len(detections)} 个峰值: {detections}")
+        print(f"[Target] 原始峰值: {raw_detections} -> 筛选后: {detections}")
         
         self.local_detections = detections
         
@@ -283,10 +320,13 @@ class RangingEngine:
         
         # 处理信号
         self._set_state(self.STATE_PROCESSING)
-        detections, correlation = self.signal_processor.detect_chirp(recorded)
+        raw_detections, correlation = self.signal_processor.detect_chirp(recorded)
+        
+        # 筛选峰值
+        detections = self._filter_peaks(raw_detections)
         
         # 调试输出
-        print(f"[Anchor] 检测到 {len(detections)} 个峰值: {detections}")
+        print(f"[Anchor] 原始峰值: {raw_detections} -> 筛选后: {detections}")
         
         self.local_detections = detections
         
@@ -303,28 +343,23 @@ class RangingEngine:
             return
         
         # 使用BeepBeep算法
-        t_a1 = self.local_detections[0]   # 本地收到自己的信号
-        t_a3 = self.local_detections[1]   # 本地收到对方的信号
-        t_b1 = self.remote_detections[0]  # 对方收到本地的信号
-        t_b3 = self.remote_detections[1]  # 对方收到自己的信号
+        # 注意：local_detections 和 remote_detections 已经经过 _filter_peaks 筛选
+        # 它们包含两个峰值 [t_early, t_late]
+        # 对于 Target (A): t_early=t_A1(Self), t_late=t_A3(Other)
+        # 对于 Anchor (B): t_early=t_B1(Other), t_late=t_B3(Self)
         
-        # 验证时间差是否合理
-        delta_a = t_a3 - t_a1
-        delta_b = t_b3 - t_b1
-        
-        # 时间差应该为正数
-        # 由于我们人为引入了延时，时间差会比较大 (约0.5秒)
-        max_time_diff = int(self.sample_rate * 1.5)  # 放宽限制
-        min_time_diff = int(self.sample_rate * 0.001)  # 最小约0.3米
-        
-        if delta_a < min_time_diff or delta_b < min_time_diff:
-            print(f"时间差过小，可能是检测错误: delta_a={delta_a}, delta_b={delta_b}")
-            return
-        
-        if delta_a > max_time_diff or delta_b > max_time_diff:
-            print(f"时间差过大，可能是检测错误: delta_a={delta_a}, delta_b={delta_b}")
-            return
-        
+        if self.device_role == 'target':
+            t_a1 = self.local_detections[0]
+            t_a3 = self.local_detections[1]
+            t_b1 = self.remote_detections[0]
+            t_b3 = self.remote_detections[1]
+        else:
+            # 如果我是 Anchor，我的 local 是 B，remote 是 A
+            t_b1 = self.local_detections[0]
+            t_b3 = self.local_detections[1]
+            t_a1 = self.remote_detections[0]
+            t_a3 = self.remote_detections[1]
+            
         distance = self.signal_processor.calculate_distance_beepbeep(
             t_a1, t_a3, t_b1, t_b3
         )

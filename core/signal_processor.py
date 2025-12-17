@@ -136,9 +136,9 @@ class SignalProcessor:
                 prominence=0.05
             )
         
-        # 为避免丢失较弱但较晚的峰（对方的Chirp通常较弱），改为按时间顺序取最早的 expected_peaks 个
-        if len(peaks) > expected_peaks:
-            peaks = np.sort(peaks)[:expected_peaks]
+        # 返回所有检测到的峰值，由上层逻辑决定如何筛选
+        # 排序以确保时间顺序
+        peaks = np.sort(peaks)
         
         return peaks.tolist(), correlation
     
