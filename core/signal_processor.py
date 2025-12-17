@@ -135,7 +135,19 @@ class SignalProcessor:
                 distance=min_distance,
                 prominence=0.05
             )
-        
+
+        # 仍不足时，兜底选取互相关值最高的点，保证至少返回 expected_peaks 个位置
+        if len(peaks) < expected_peaks:
+            sorted_idx = np.argsort(correlation_norm)[::-1]
+            fallback = []
+            for idx in sorted_idx:
+                if all(abs(idx - s) >= min_distance for s in fallback):
+                    fallback.append(idx)
+                if len(fallback) >= expected_peaks:
+                    break
+            if fallback:
+                peaks = np.array(fallback, dtype=int)
+
         # 返回所有检测到的峰值，由上层逻辑决定如何筛选
         # 排序以确保时间顺序
         peaks = np.sort(peaks)

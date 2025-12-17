@@ -126,7 +126,7 @@ class RangingEngine:
         
     def _on_detection_result(self, data, timestamp):
         """收到对方的检测结果"""
-        self.remote_detections = data.get('detections', [])
+        self.remote_detections = self._to_int_list(data.get('detections', []))
         self._calculate_distance()
         
     def _on_distance_result(self, data, timestamp):
@@ -141,6 +141,11 @@ class RangingEngine:
         self.state = new_state
         if self.on_state_changed:
             self.on_state_changed(new_state)
+
+    @staticmethod
+    def _to_int_list(values):
+        """确保列表中的元素为Python int，避免JSON序列化np.int64出错"""
+        return [int(v) for v in values]
             
     def start_server(self, host='0.0.0.0'):
         """
@@ -212,33 +217,55 @@ class RangingEngine:
         从检测到的峰值中筛选出最可能的两个峰值
         根据设备角色和预期的时序进行筛选
         """
+        # 始终转换为 numpy 数组进行计算
+        peaks = np.array(peaks, dtype=int)
+
         if len(peaks) < 2:
-            return peaks
-            
-        # 转换为numpy数组以便计算
+            return [int(x) for x in peaks]
+
+        # 转换为排序后的数组
         peaks = np.sort(peaks)
         
         # 预期的时间差范围 (采样点)
-        # Target: 理论差值 0.6s + 2*ToF。范围 [0.5s, 1.2s]
-        # Anchor: 理论差值 0.5s - ToF。范围 [0.2s, 0.6s]
-        
+        # Target: 自身播放(0.1s)与锚节点(0.6s)的间隔约0.5s，留出 ToF、驱动延迟裕量
+        # Anchor: 期望听到目标(≈0.1s)与自身(0.6s)的间隔同样约0.5s
         if self.device_role == 'target':
-            min_diff = int(self.sample_rate * 0.5)
-            max_diff = int(self.sample_rate * 1.2)
+            min_diff = int(self.sample_rate * 0.3)
+            max_diff = int(self.sample_rate * 1.5)
         else:
             min_diff = int(self.sample_rate * 0.2)
-            max_diff = int(self.sample_rate * 0.6)
-            
-        # 寻找最佳匹配对
-        # 优先寻找最早的符合条件的对
+            max_diff = int(self.sample_rate * 1.0)
+
+        expected_diff = int(self.sample_rate * 0.5)
+
+        # 寻找与期望最接近的匹配对
+        best_in_range = None  # 满足约束的最佳对
+        best_in_range_err = None
+        best_any = None       # 不满足约束时的兜底对
+        best_any_err = None
+
         for i in range(len(peaks)):
             for j in range(i + 1, len(peaks)):
                 diff = peaks[j] - peaks[i]
+                err = abs(diff - expected_diff)
+
                 if min_diff <= diff <= max_diff:
-                    return [peaks[i], peaks[j]]
-                    
-        print(f"[{self.device_role}] 未找到符合时间差约束的峰值对。Peaks: {peaks}, Range: [{min_diff}, {max_diff}]")
-        # 如果找不到，返回空列表，避免错误计算
+                    if best_in_range is None or err < best_in_range_err:
+                        best_in_range = (peaks[i], peaks[j])
+                        best_in_range_err = err
+                # 记录全局最优，确保至少返回一对
+                if best_any is None or err < best_any_err:
+                    best_any = (peaks[i], peaks[j])
+                    best_any_err = err
+
+        if best_in_range is not None:
+            return [int(best_in_range[0]), int(best_in_range[1])]
+
+        # 兜底：即使不在范围内，也返回与期望间隔最近的一对，避免空列表
+        if best_any is not None:
+            print(f"[{self.device_role}] 未找到符合时间差约束的峰值对，使用兜底结果。Peaks: {peaks}, Range: [{min_diff}, {max_diff}], chosen diff: {int(best_any[1]-best_any[0])}")
+            return [int(best_any[0]), int(best_any[1])]
+
         return []
 
     def _do_target_ranging(self):
@@ -276,10 +303,11 @@ class RangingEngine:
         
         # 处理信号
         self._set_state(self.STATE_PROCESSING)
-        raw_detections, correlation = self.signal_processor.detect_chirp(recorded)
+        # 降低阈值以提高检测灵敏度
+        raw_detections, correlation = self.signal_processor.detect_chirp(recorded, threshold_ratio=0.05)
         
         # 筛选峰值
-        detections = self._filter_peaks(raw_detections)
+        detections = self._to_int_list(self._filter_peaks(raw_detections))
         
         # 调试输出
         print(f"[Target] 原始峰值: {raw_detections} -> 筛选后: {detections}")
@@ -320,10 +348,11 @@ class RangingEngine:
         
         # 处理信号
         self._set_state(self.STATE_PROCESSING)
-        raw_detections, correlation = self.signal_processor.detect_chirp(recorded)
+        # 降低阈值以提高检测灵敏度
+        raw_detections, correlation = self.signal_processor.detect_chirp(recorded, threshold_ratio=0.05)
         
         # 筛选峰值
-        detections = self._filter_peaks(raw_detections)
+        detections = self._to_int_list(self._filter_peaks(raw_detections))
         
         # 调试输出
         print(f"[Anchor] 原始峰值: {raw_detections} -> 筛选后: {detections}")
